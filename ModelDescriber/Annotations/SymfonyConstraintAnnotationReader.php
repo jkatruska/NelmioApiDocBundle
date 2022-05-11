@@ -223,9 +223,10 @@ class SymfonyConstraintAnnotationReader
      */
     private function isConstraintInGroup(Constraint $annotation, ?array $validationGroups): bool
     {
+        $constraintGroups = $annotation->groups ?? [];
         return count(array_intersect(
-            $validationGroups ?: [Constraint::DEFAULT_GROUP],
-            $annotation->groups
-        )) > 0;
+                $validationGroups ?: [Constraint::DEFAULT_GROUP],
+                $constraintGroups
+            )) > 0 || (count($constraintGroups) === 1 && $constraintGroups[0] === Constraint::DEFAULT_GROUP);
     }
 }
