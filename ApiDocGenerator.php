@@ -15,14 +15,18 @@ use Nelmio\ApiDocBundle\Describer\DescriberInterface;
 use Nelmio\ApiDocBundle\Describer\ModelRegistryAwareInterface;
 use Nelmio\ApiDocBundle\Model\ModelRegistry;
 use Nelmio\ApiDocBundle\ModelDescriber\ModelDescriberInterface;
-use Nelmio\ApiDocBundle\OpenApiPhp\DefaultOperationId;
 use Nelmio\ApiDocBundle\OpenApiPhp\ModelRegister;
+use Nelmio\ApiDocBundle\OpenApiPhp\Util;
 use OpenApi\Analysis;
 use OpenApi\Annotations\OpenApi;
+use OpenApi\Generator;
 use Psr\Cache\CacheItemPoolInterface;
+use Psr\Log\LoggerAwareTrait;
 
 final class ApiDocGenerator
 {
+    use LoggerAwareTrait;
+
     /** @var OpenApi */
     private $openApi;
 
@@ -79,8 +83,19 @@ final class ApiDocGenerator
             }
         }
 
+        $generator = new Generator();
+        // Remove OperationId processor as we use a lot of generated annotations which do not have enough information in their context
+        // to generate these ids properly.
+        // @see https://github.com/zircote/swagger-php/issues/1153
+        $generator->setProcessors(array_filter($generator->getProcessors(), function ($processor) {
+            return !$processor instanceof \OpenApi\Processors\OperationId;
+        }));
+
         $this->openApi = new OpenApi([]);
         $modelRegistry = new ModelRegistry($this->modelDescribers, $this->openApi, $this->alternativeNames);
+        if (null !== $this->logger) {
+            $modelRegistry->setLogger($this->logger);
+        }
         foreach ($this->describers as $describer) {
             if ($describer instanceof ModelRegistryAwareInterface) {
                 $describer->setModelRegistry($modelRegistry);
@@ -89,8 +104,14 @@ final class ApiDocGenerator
             $describer->describe($this->openApi);
         }
 
-        $analysis = new Analysis();
-        $analysis->addAnnotation($this->openApi, null);
+        $context = Util::createContext(
+            // BC for for zircote/swagger-php < 4.2
+            method_exists($generator, 'getVersion')
+            ? ['version' => $generator->getVersion()]
+            : []
+        );
+        $analysis = new Analysis([], $context);
+        $analysis->addAnnotation($this->openApi, $context);
 
         // Register model annotations
         $modelRegister = new ModelRegister($modelRegistry, $this->mediaTypes);
@@ -99,10 +120,7 @@ final class ApiDocGenerator
         // Calculate the associated schemas
         $modelRegistry->registerSchemas();
 
-        $defaultOperationIdProcessor = new DefaultOperationId();
-        $defaultOperationIdProcessor($analysis);
-
-        $analysis->process();
+        $analysis->process($generator->getProcessors());
         $analysis->validate();
 
         if (isset($item)) {

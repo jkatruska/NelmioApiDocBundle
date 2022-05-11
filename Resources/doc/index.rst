@@ -39,7 +39,7 @@ Open a command console, enter your project directory and execute the following c
 
         class AppKernel extends Kernel
         {
-            public function registerBundles()
+            public function registerBundles(): iterable
             {
                 $bundles = [
                     // ...
@@ -72,7 +72,7 @@ Open a command console, enter your project directory and execute the following c
             defaults: { _controller: nelmio_api_doc.controller.swagger }
 
     As you just installed the bundle, you'll likely see routes you don't want in
-    your documentation such as `/_profiler/`. To fix this, you can filter the
+    your documentation such as ``/_profiler/``. To fix this, you can filter the
     routes that are documented by configuring the bundle:
 
     .. code-block:: yaml
@@ -143,8 +143,8 @@ To document your routes, you can use the SwaggerPHP annotations and the
 
     class UserController
     {
-        /**
-         * List the rewards of the specified user.
+        /**
+         * List the rewards of the specified user.
          *
          * This call takes into account all confirmed awards, but not pending or refused awards.
          *
@@ -182,27 +182,27 @@ Use it instead of a definition reference and the bundle will deduce your model p
 
 .. note::
 
-    A model can be a Symfony form type, a Doctrine ORM entity or a general PHP object.
+    A model can be a Symfony form type, a Doctrine ORM entity or a general PHP object.
 
 This annotation has two options:
 
 * ``type`` to specify your model's type::
 
     /**
-     * @OA\Response(
-     *     response=200,
-     *     @Model(type=User::class)
-     * )
-     */
+     * @OA\Response(
+     *     response=200,
+     *     @Model(type=User::class)
+     * )
+     */
 
 * ``groups`` to specify the serialization groups used to (de)serialize your model::
 
-    /**
-     * @OA\Response(
-     *     response=200,
-     *     @Model(type=User::class, groups={"non_sensitive_data"})
-     * )
-     */
+     /**
+     * @OA\Response(
+     *     response=200,
+     *     @Model(type=User::class, groups={"non_sensitive_data"})
+     * )
+     */
 
  .. tip::
 
@@ -256,6 +256,30 @@ General PHP objects
     **If you're using the JMS Serializer**, the metadata of the JMS serializer are used by default to describe your
     models. Additional information is extracted from the PHP doc block comment,
     but the property types must be specified in the JMS annotations.
+    
+    NOTE: If you are using serialization contexts (e.g. Groups) each permutation will be treated as a separate Path. For example if you have the following two variations defined in different places in your code:
+    
+    .. code-block:: php
+
+        /**
+         * A nested serializer property with no context group
+         *
+         * @JMS\VirtualProperty
+         * @JMS\Type("ArrayCollection<App\Response\ItemResponse>")
+         * @JMS\Since("1.0")
+         *
+         * @return Collection|ItemResponse[]
+         */
+        public function getItems(): Collection|array
+        {
+            return $this->items;
+        }
+
+    .. code-block:: php
+
+       @OA\Schema(ref=@Model(type="App\Response\ItemResponse", groups=["Default"])),
+
+    It will generate two different component schemas (ItemResponse, ItemResponse2), even though Default and blank are the same. This is by design.
 
     In case you prefer using the `Symfony PropertyInfo component`_ (you
     won't be able to use JMS serialization groups), you can disable JMS serializer
@@ -315,7 +339,9 @@ If you need more complex features, take a look at:
     areas
     alternative_names
     customization
+    commands
     faq
+    security
 
 .. _`Symfony PropertyInfo component`: https://symfony.com/doc/current/components/property_info.html
 .. _`willdurand/Hateoas`: https://github.com/willdurand/Hateoas

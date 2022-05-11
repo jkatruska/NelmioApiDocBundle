@@ -11,6 +11,7 @@
 
 namespace Nelmio\ApiDocBundle\Tests\Functional\Entity;
 
+use Nelmio\ApiDocBundle\Tests\ModelDescriber\Annotations\Fixture as CustomAssert;
 use Symfony\Component\Validator\Constraints as Assert;
 
 class SymfonyConstraints
@@ -18,7 +19,7 @@ class SymfonyConstraints
     /**
      * @var int
      *
-     * @Assert\NotBlank()
+     * @Assert\NotBlank(groups={"test"})
      */
     private $propertyNotBlank;
 
@@ -72,6 +73,13 @@ class SymfonyConstraints
     private $propertyChoiceWithCallbackWithoutClass;
 
     /**
+     * @var string[]
+     *
+     * @Assert\Choice(multiple=true, choices={"choice1", "choice2"})
+     */
+    private $propertyChoiceWithMultiple;
+
+    /**
      * @var int
      *
      * @Assert\Expression(
@@ -101,6 +109,18 @@ class SymfonyConstraints
      * @Assert\LessThanOrEqual(23)
      */
     private $propertyLessThanOrEqual;
+
+    /**
+     * @var int
+     *
+     * @CustomAssert\CompoundValidationRule()
+     */
+    private $propertyWithCompoundValidationRule;
+
+    public function setPropertyWithCompoundValidationRule(int $propertyWithCompoundValidationRule): void
+    {
+        $this->propertyWithCompoundValidationRule = $propertyWithCompoundValidationRule;
+    }
 
     /**
      * @Assert\Count(min="0", max="10")
@@ -143,6 +163,11 @@ class SymfonyConstraints
     public function setPropertyChoiceWithCallbackWithoutClass(int $propertyChoiceWithCallbackWithoutClass): void
     {
         $this->propertyChoiceWithCallbackWithoutClass = $propertyChoiceWithCallbackWithoutClass;
+    }
+
+    public function setPropertyChoiceWithMultiple(array $propertyChoiceWithMultiple): void
+    {
+        $this->propertyChoiceWithMultiple = $propertyChoiceWithMultiple;
     }
 
     public function setPropertyExpression(int $propertyExpression): void

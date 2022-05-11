@@ -27,6 +27,7 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\XmlFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\HttpKernel\DependencyInjection\Extension;
 use Symfony\Component\Routing\RouteCollection;
 
@@ -63,13 +64,15 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
 
         $container->setParameter('nelmio_api_doc.areas', array_keys($config['areas']));
         $container->setParameter('nelmio_api_doc.media_types', $config['media_types']);
+        $container->setParameter('nelmio_api_doc.use_validation_groups', $config['use_validation_groups']);
         foreach ($config['areas'] as $area => $areaConfig) {
             $nameAliases = $this->findNameAliases($config['models']['names'], $area);
-
             $container->register(sprintf('nelmio_api_doc.generator.%s', $area), ApiDocGenerator::class)
                 ->setPublic(true)
                 ->addMethodCall('setAlternativeNames', [$nameAliases])
                 ->addMethodCall('setMediaTypes', [$config['media_types']])
+                ->addMethodCall('setLogger', [new Reference('logger')])
+                ->addTag('monolog.logger', ['channel' => 'nelmio_api_doc'])
                 ->setArguments([
                     new TaggedIteratorArgument(sprintf('nelmio_api_doc.describer.%s', $area)),
                     new TaggedIteratorArgument('nelmio_api_doc.model_describer'),
@@ -107,6 +110,7 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
                 && 0 === count($areaConfig['host_patterns'])
                 && 0 === count($areaConfig['name_patterns'])
                 && false === $areaConfig['with_annotation']
+                && false === $areaConfig['disable_default_routes']
             ) {
                 $container->setDefinition(sprintf('nelmio_api_doc.routes.%s', $area), $routesDefinition)
                     ->setPublic(false);
@@ -129,7 +133,7 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
             }
         }
 
-        $container->register('nelmio_api_doc.generator_locator')
+        $container->register('nelmio_api_doc.generator_locator', ServiceLocator::class)
             ->setPublic(false)
             ->addTag('container.service_locator')
             ->addArgument(array_combine(
@@ -149,11 +153,15 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
                 ->setArgument(1, $config['media_types']);
         }
 
-        // ApiPlatform support
         $bundles = $container->getParameter('kernel.bundles');
-        if (!isset($bundles['TwigBundle'])) {
+        if (!isset($bundles['TwigBundle']) || !class_exists('Symfony\Component\Asset\Packages')) {
             $container->removeDefinition('nelmio_api_doc.controller.swagger_ui');
+
+            $container->removeDefinition('nelmio_api_doc.render_docs.html');
+            $container->removeDefinition('nelmio_api_doc.render_docs.html.asset');
         }
+
+        // ApiPlatform support
         if (isset($bundles['ApiPlatformBundle']) && class_exists('ApiPlatform\Core\Documentation\Documentation')) {
             $loader->load('api_platform.xml');
         }
@@ -169,6 +177,7 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
                     new Reference('annotations.reader'),
                     $config['media_types'],
                     $jmsNamingStrategy,
+                    $container->getParameter('nelmio_api_doc.use_validation_groups'),
                 ])
                 ->addTag('nelmio_api_doc.model_describer', ['priority' => 50]);
 

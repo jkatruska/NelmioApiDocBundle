@@ -12,7 +12,9 @@
 namespace Nelmio\ApiDocBundle\Tests\Functional;
 
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
+use Nelmio\ApiDocBundle\Tests\Helper;
 use OpenApi\Annotations as OA;
+use OpenApi\Generator;
 use Symfony\Component\Serializer\Annotation\SerializedName;
 
 class FunctionalTest extends WebTestCase
@@ -38,9 +40,12 @@ class FunctionalTest extends WebTestCase
         $this->assertNotHasPath('/api/admin', $api);
     }
 
-    public function testFetchArticleAction()
+    /**
+     * @dataProvider provideArticleRoute
+     */
+    public function testFetchArticleAction(string $articleRoute)
     {
-        $operation = $this->getOperation('/api/article/{id}', 'get');
+        $operation = $this->getOperation($articleRoute, 'get');
 
         $this->assertHasResponse('200', $operation);
         $response = $this->getOperationResponse($operation, '200');
@@ -52,6 +57,15 @@ class FunctionalTest extends WebTestCase
         $this->assertHasProperty('author', $articleModel);
         $this->assertSame('#/components/schemas/User2', Util::getProperty($articleModel, 'author')->ref);
         $this->assertNotHasProperty('author', Util::getProperty($articleModel, 'author'));
+    }
+
+    public function provideArticleRoute(): iterable
+    {
+        yield 'Annotations' => ['/api/article/{id}'];
+
+        if (\PHP_VERSION_ID >= 80100) {
+            yield 'Attributes' => ['/api/article_attributes/{id}'];
+        }
     }
 
     public function testFilteredAction()
@@ -83,7 +97,7 @@ class FunctionalTest extends WebTestCase
     public function testAnnotationWithManualPath()
     {
         $path = $this->getPath('/api/swagger2');
-        $this->assertSame(OA\UNDEFINED, $path->post);
+        $this->assertSame(Generator::UNDEFINED, $path->post);
 
         $operation = $this->getOperation('/api/swagger', 'get');
         $this->assertNotHasParameter('Accept-Version', 'header', $operation);
@@ -122,10 +136,10 @@ class FunctionalTest extends WebTestCase
     {
         $operation = $this->getOperation('/api/test/{user}', 'get');
 
-        $this->assertEquals(OA\UNDEFINED, $operation->security);
-        $this->assertEquals(OA\UNDEFINED, $operation->summary);
-        $this->assertEquals(OA\UNDEFINED, $operation->description);
-        $this->assertEquals(OA\UNDEFINED, $operation->deprecated);
+        $this->assertEquals(Generator::UNDEFINED, $operation->security);
+        $this->assertEquals(Generator::UNDEFINED, $operation->summary);
+        $this->assertEquals(Generator::UNDEFINED, $operation->description);
+        $this->assertEquals(Generator::UNDEFINED, $operation->deprecated);
         $this->assertHasResponse(200, $operation);
 
         $this->assertHasParameter('user', 'path', $operation);
@@ -133,7 +147,7 @@ class FunctionalTest extends WebTestCase
         $this->assertTrue($parameter->required);
         $this->assertEquals('string', $parameter->schema->type);
         $this->assertEquals('/foo/', $parameter->schema->pattern);
-        $this->assertEquals(OA\UNDEFINED, $parameter->schema->format);
+        $this->assertEquals(Generator::UNDEFINED, $parameter->schema->format);
     }
 
     public function testDeprecatedAction()
@@ -331,15 +345,59 @@ class FunctionalTest extends WebTestCase
         ], json_decode($this->getModel('DummyType')->toJson(), true));
     }
 
-    public function testSecurityAction()
+    /**
+     * @dataProvider provideSecurityRoute
+     */
+    public function testSecurityAction(string $route)
     {
-        $operation = $this->getOperation('/api/security', 'get');
+        $operation = $this->getOperation($route, 'get');
 
         $expected = [
             ['api_key' => []],
             ['basic' => []],
+            ['oauth2' => ['scope_1']],
         ];
         $this->assertEquals($expected, $operation->security);
+    }
+
+    public function provideSecurityRoute(): iterable
+    {
+        yield 'Annotations' => ['/api/security'];
+
+        if (\PHP_VERSION_ID >= 80100) {
+            yield 'Attributes' => ['/api/security_attributes'];
+        }
+    }
+
+    /**
+     * @dataProvider provideSecurityOverrideRoute
+     */
+    public function testSecurityOverrideAction(string $route)
+    {
+        $operation = $this->getOperation($route, 'get');
+        $this->assertEquals([], $operation->security);
+    }
+
+    public function provideSecurityOverrideRoute(): iterable
+    {
+        yield 'Annotations' => ['/api/securityOverride'];
+
+        if (\PHP_VERSION_ID >= 80100) {
+            yield 'Attributes' => ['/api/security_override_attributes'];
+        }
+    }
+
+    public function testInlinePHP81Parameters()
+    {
+        if (\PHP_VERSION_ID < 80100) {
+            $this->markTestSkipped('Attributes require PHP 8.1');
+        }
+
+        $operation = $this->getOperation('/api/inline_path_parameters', 'get');
+        $this->assertCount(1, $operation->parameters);
+        $this->assertInstanceOf(OA\PathParameter::class, $operation->parameters[0]);
+        $this->assertSame($operation->parameters[0]->name, 'product_id');
+        $this->assertSame($operation->parameters[0]->schema->type, 'string');
     }
 
     public function testClassSecurityAction()
@@ -354,7 +412,7 @@ class FunctionalTest extends WebTestCase
 
     public function testSymfonyConstraintDocumentation()
     {
-        $this->assertEquals([
+        $expected = [
             'required' => [
                 'propertyNotBlank',
                 'propertyNotNull',
@@ -362,8 +420,8 @@ class FunctionalTest extends WebTestCase
             'properties' => [
                 'propertyNotBlank' => [
                     'type' => 'integer',
-                    'maxItems' => '10',
-                    'minItems' => '0',
+                    'maxItems' => 10,
+                    'minItems' => 0,
                 ],
                 'propertyNotNull' => [
                     'type' => 'integer',
@@ -394,6 +452,13 @@ class FunctionalTest extends WebTestCase
                     'type' => 'integer',
                     'enum' => ['choice1', 'choice2'],
                 ],
+                'propertyChoiceWithMultiple' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'string',
+                        'enum' => ['choice1', 'choice2'],
+                    ],
+                ],
                 'propertyExpression' => [
                     'type' => 'integer',
                 ],
@@ -411,10 +476,26 @@ class FunctionalTest extends WebTestCase
                     'type' => 'integer',
                     'maximum' => 23,
                 ],
+                'propertyWithCompoundValidationRule' => [
+                    'type' => 'integer',
+                ],
             ],
             'type' => 'object',
             'schema' => 'SymfonyConstraints',
-        ], json_decode($this->getModel('SymfonyConstraints')->toJson(), true));
+        ];
+
+        if (Helper::isCompoundValidatorConstraintSupported()) {
+            $expected['required'][] = 'propertyWithCompoundValidationRule';
+            $expected['properties']['propertyWithCompoundValidationRule'] = [
+                'type' => 'integer',
+                'maximum' => 5,
+                'exclusiveMaximum' => true,
+                'minimum' => 0,
+                'exclusiveMinimum' => true,
+            ];
+        }
+
+        $this->assertEquals($expected, json_decode($this->getModel('SymfonyConstraints')->toJson(), true));
     }
 
     public function testConfigReference()
@@ -481,7 +562,25 @@ class FunctionalTest extends WebTestCase
     public function testDefaultOperationId()
     {
         $operation = $this->getOperation('/api/article/{id}', 'get');
-        $this->assertNull($operation->operationId);
+        $this->assertEquals('get_api_nelmio_apidoc_tests_functional_api_fetcharticle', $operation->operationId);
+    }
+
+    public function testNamedRouteOperationId()
+    {
+        $operation = $this->getOperation('/api/named_route-operation-id', 'get');
+        $this->assertEquals('get_api_named_route_operation_id', $operation->operationId);
+
+        $operation = $this->getOperation('/api/named_route-operation-id', 'post');
+        $this->assertEquals('post_api_named_route_operation_id', $operation->operationId);
+    }
+
+    public function testCustomOperationId()
+    {
+        $operation = $this->getOperation('/api/custom-operation-id', 'get');
+        $this->assertEquals('get-custom-operation-id', $operation->operationId);
+
+        $operation = $this->getOperation('/api/custom-operation-id', 'post');
+        $this->assertEquals('post-custom-operation-id', $operation->operationId);
     }
 
     /**
@@ -497,5 +596,32 @@ class FunctionalTest extends WebTestCase
         $this->assertNotHasProperty('privateField', $model);
         $this->assertNotHasProperty('protectedField', $model);
         $this->assertNotHasProperty('protected', $model);
+    }
+
+    public function testModelsWithDiscriminatorMapAreLoadedWithOpenApiPolymorphism()
+    {
+        $model = $this->getModel('SymfonyDiscriminator');
+
+        $this->assertInstanceOf(OA\Discriminator::class, $model->discriminator);
+        $this->assertSame('type', $model->discriminator->propertyName);
+        $this->assertCount(2, $model->discriminator->mapping);
+        $this->assertArrayHasKey('one', $model->discriminator->mapping);
+        $this->assertArrayHasKey('two', $model->discriminator->mapping);
+        $this->assertNotSame(Generator::UNDEFINED, $model->oneOf);
+        $this->assertCount(2, $model->oneOf);
+    }
+
+    public function testDiscriminatorMapLoadsChildrenModels()
+    {
+        // get model does its own assertions
+        $this->getModel('SymfonyDiscriminatorOne');
+        $this->getModel('SymfonyDiscriminatorTwo');
+    }
+
+    public function testNoAdditionalPropertiesSupport()
+    {
+        $model = $this->getModel('AddProp');
+
+        $this->assertFalse($model->additionalProperties);
     }
 }

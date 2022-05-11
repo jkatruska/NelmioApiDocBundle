@@ -18,6 +18,7 @@ use Nelmio\ApiDocBundle\Model\Model;
 use Nelmio\ApiDocBundle\ModelDescriber\Annotations\AnnotationsReader;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
 use OpenApi\Annotations as OA;
+use OpenApi\Generator;
 use Symfony\Component\Form\AbstractType;
 use Symfony\Component\Form\Extension\Core\Type\FormType;
 use Symfony\Component\Form\FormConfigInterface;
@@ -37,9 +38,14 @@ final class FormModelDescriber implements ModelDescriberInterface, ModelRegistry
     private $formFactory;
     private $doctrineReader;
     private $mediaTypes;
+    private $useValidationGroups;
 
-    public function __construct(FormFactoryInterface $formFactory = null, Reader $reader = null, array $mediaTypes = null)
-    {
+    public function __construct(
+        FormFactoryInterface $formFactory = null,
+        Reader $reader = null,
+        array $mediaTypes = null,
+        bool $useValidationGroups = false
+    ) {
         $this->formFactory = $formFactory;
         $this->doctrineReader = $reader;
         if (null === $reader) {
@@ -51,6 +57,7 @@ final class FormModelDescriber implements ModelDescriberInterface, ModelRegistry
             @trigger_error(sprintf('Not passing media types to the constructor of %s is deprecated since version 4.1 and won\'t be allowed in version 5.', self::class), E_USER_DEPRECATED);
         }
         $this->mediaTypes = $mediaTypes;
+        $this->useValidationGroups = $useValidationGroups;
     }
 
     public function describe(Model $model, OA\Schema $schema)
@@ -66,7 +73,12 @@ final class FormModelDescriber implements ModelDescriberInterface, ModelRegistry
 
         $class = $model->getType()->getClassName();
 
-        $annotationsReader = new AnnotationsReader($this->doctrineReader, $this->modelRegistry, $this->mediaTypes);
+        $annotationsReader = new AnnotationsReader(
+            $this->doctrineReader,
+            $this->modelRegistry,
+            $this->mediaTypes,
+            $this->useValidationGroups
+        );
         $annotationsReader->updateDefinition(new \ReflectionClass($class), $schema);
 
         $form = $this->formFactory->create($class, null, $model->getOptions() ?? []);
@@ -90,7 +102,7 @@ final class FormModelDescriber implements ModelDescriberInterface, ModelRegistry
             $property = Util::getProperty($schema, $name);
 
             if ($config->getRequired()) {
-                $required = OA\UNDEFINED !== $schema->required ? $schema->required : [];
+                $required = Generator::UNDEFINED !== $schema->required ? $schema->required : [];
                 $required[] = $name;
 
                 $schema->required = $required;
@@ -100,7 +112,7 @@ final class FormModelDescriber implements ModelDescriberInterface, ModelRegistry
                 $property->mergeProperties($config->getOption('documentation'));
             }
 
-            if (OA\UNDEFINED !== $property->type) {
+            if (Generator::UNDEFINED !== $property->type) {
                 continue; // Type manually defined
             }
 
@@ -124,7 +136,14 @@ final class FormModelDescriber implements ModelDescriberInterface, ModelRegistry
                 null,
                 $config->getOptions()
             );
-            $property->ref = $this->modelRegistry->register($model);
+
+            $ref = $this->modelRegistry->register($model);
+            // We need to use allOf for description and title to be displayed
+            if ($config->hasOption('documentation') && !empty($config->getOption('documentation'))) {
+                $property->allOf = [new OA\Schema(['ref' => $ref])];
+            } else {
+                $property->ref = $ref;
+            }
 
             return;
         }

@@ -23,6 +23,7 @@ use Nelmio\ApiDocBundle\Model\Model;
 use Nelmio\ApiDocBundle\ModelDescriber\Annotations\AnnotationsReader;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
 use OpenApi\Annotations as OA;
+use OpenApi\Generator;
 use Symfony\Component\PropertyInfo\Type;
 
 /**
@@ -49,16 +50,23 @@ class JMSModelDescriber implements ModelDescriberInterface, ModelRegistryAwareIn
      */
     private $propertyTypeUseGroupsCache = [];
 
+    /**
+     * @var bool
+     */
+    private $useValidationGroups;
+
     public function __construct(
         MetadataFactoryInterface $factory,
         Reader $reader,
         array $mediaTypes,
-        ?PropertyNamingStrategyInterface $namingStrategy = null
+        ?PropertyNamingStrategyInterface $namingStrategy = null,
+        bool $useValidationGroups = false
     ) {
         $this->factory = $factory;
         $this->namingStrategy = $namingStrategy;
         $this->doctrineReader = $reader;
         $this->mediaTypes = $mediaTypes;
+        $this->useValidationGroups = $useValidationGroups;
     }
 
     /**
@@ -73,7 +81,12 @@ class JMSModelDescriber implements ModelDescriberInterface, ModelRegistryAwareIn
         }
 
         $schema->type = 'object';
-        $annotationsReader = new AnnotationsReader($this->doctrineReader, $this->modelRegistry, $this->mediaTypes);
+        $annotationsReader = new AnnotationsReader(
+            $this->doctrineReader,
+            $this->modelRegistry,
+            $this->mediaTypes,
+            $this->useValidationGroups
+        );
         $annotationsReader->updateDefinition(new \ReflectionClass($className), $schema);
 
         $isJmsV1 = null !== $this->namingStrategy;
@@ -134,7 +147,7 @@ class JMSModelDescriber implements ModelDescriberInterface, ModelRegistryAwareIn
                 $annotationsReader->updateProperty($reflection, $property, $groups);
             }
 
-            if (OA\UNDEFINED !== $property->type || OA\UNDEFINED !== $property->ref) {
+            if (Generator::UNDEFINED !== $property->type || Generator::UNDEFINED !== $property->ref) {
                 $context->popPropertyMetadata();
 
                 continue;

@@ -20,13 +20,16 @@ use Nelmio\ApiDocBundle\ModelDescriber\Annotations\AnnotationsReader;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
 use Nelmio\ApiDocBundle\PropertyDescriber\PropertyDescriberInterface;
 use OpenApi\Annotations as OA;
+use OpenApi\Generator;
 use Symfony\Component\PropertyInfo\PropertyInfoExtractorInterface;
 use Symfony\Component\PropertyInfo\Type;
+use Symfony\Component\Serializer\Annotation\DiscriminatorMap;
 use Symfony\Component\Serializer\NameConverter\NameConverterInterface;
 
 class ObjectModelDescriber implements ModelDescriberInterface, ModelRegistryAwareInterface
 {
     use ModelRegistryAwareTrait;
+    use ApplyOpenApiDiscriminatorTrait;
 
     /** @var PropertyInfoExtractorInterface */
     private $propertyInfo;
@@ -38,21 +41,23 @@ class ObjectModelDescriber implements ModelDescriberInterface, ModelRegistryAwar
     private $mediaTypes;
     /** @var NameConverterInterface[] */
     private $nameConverter;
-
-    private $swaggerDefinitionAnnotationReader;
+    /** @var bool */
+    private $useValidationGroups;
 
     public function __construct(
         PropertyInfoExtractorInterface $propertyInfo,
         Reader $reader,
         iterable $propertyDescribers,
         array $mediaTypes,
-        NameConverterInterface $nameConverter = null
+        NameConverterInterface $nameConverter = null,
+        bool $useValidationGroups = false
     ) {
         $this->propertyInfo = $propertyInfo;
         $this->doctrineReader = $reader;
         $this->propertyDescribers = $propertyDescribers;
         $this->mediaTypes = $mediaTypes;
         $this->nameConverter = $nameConverter;
+        $this->useValidationGroups = $useValidationGroups;
     }
 
     public function describe(Model $model, OA\Schema $schema)
@@ -68,8 +73,24 @@ class ObjectModelDescriber implements ModelDescriberInterface, ModelRegistryAwar
         }
 
         $reflClass = new \ReflectionClass($class);
-        $annotationsReader = new AnnotationsReader($this->doctrineReader, $this->modelRegistry, $this->mediaTypes);
+        $annotationsReader = new AnnotationsReader(
+            $this->doctrineReader,
+            $this->modelRegistry,
+            $this->mediaTypes,
+            $this->useValidationGroups
+        );
         $annotationsReader->updateDefinition($reflClass, $schema);
+
+        $discriminatorMap = $this->getAnnotation($reflClass, DiscriminatorMap::class);
+        if ($discriminatorMap && Generator::UNDEFINED === $schema->discriminator) {
+            $this->applyOpenApiDiscriminator(
+                $model,
+                $schema,
+                $this->modelRegistry,
+                $discriminatorMap->getTypeProperty(),
+                $discriminatorMap->getMapping()
+            );
+        }
 
         $propertyInfoProperties = $this->propertyInfo->getProperties($class, $context);
 
@@ -103,7 +124,7 @@ class ObjectModelDescriber implements ModelDescriberInterface, ModelRegistryAwar
             }
 
             // If type manually defined
-            if (OA\UNDEFINED !== $property->type || OA\UNDEFINED !== $property->ref) {
+            if (Generator::UNDEFINED !== $property->type || Generator::UNDEFINED !== $property->ref) {
                 continue;
             }
 
@@ -169,6 +190,23 @@ class ObjectModelDescriber implements ModelDescriberInterface, ModelRegistryAwar
         }
 
         throw new \Exception(sprintf('Type "%s" is not supported in %s::$%s. You may use the `@OA\Property(type="")` annotation to specify it manually.', $types[0]->getBuiltinType(), $model->getType()->getClassName(), $propertyName));
+    }
+
+    /**
+     * @return mixed
+     */
+    private function getAnnotation(\ReflectionClass $reflection, string $className)
+    {
+        if (false === class_exists($className)) {
+            return null;
+        }
+        if (\PHP_VERSION_ID >= 80000) {
+            if (null !== $attribute = $reflection->getAttributes($className, \ReflectionAttribute::IS_INSTANCEOF)[0] ?? null) {
+                return $attribute->newInstance();
+            }
+        }
+
+        return $this->doctrineReader->getClassAnnotation($reflection, $className);
     }
 
     public function supports(Model $model): bool

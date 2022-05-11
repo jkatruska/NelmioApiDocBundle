@@ -16,8 +16,10 @@ use FOS\RestBundle\Controller\Annotations\QueryParam;
 use FOS\RestBundle\Controller\Annotations\RequestParam;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
 use OpenApi\Annotations as OA;
+use OpenApi\Generator;
 use Symfony\Component\Routing\Route;
 use Symfony\Component\Validator\Constraint;
+use Symfony\Component\Validator\Constraints\DateTime;
 use Symfony\Component\Validator\Constraints\Regex;
 
 final class FosRestDescriber implements RouteDescriberInterface
@@ -42,6 +44,8 @@ final class FosRestDescriber implements RouteDescriberInterface
         $annotations = array_filter($annotations, static function ($value) {
             return $value instanceof RequestParam || $value instanceof QueryParam;
         });
+        $annotations = array_merge($annotations, $this->getAttributesAsAnnotation($reflectionMethod, RequestParam::class));
+        $annotations = array_merge($annotations, $this->getAttributesAsAnnotation($reflectionMethod, QueryParam::class));
 
         foreach ($this->getOperations($api, $route) as $operation) {
             foreach ($annotations as $annotation) {
@@ -54,7 +58,7 @@ final class FosRestDescriber implements RouteDescriberInterface
 
                     $parameter->required = !$annotation->nullable && $annotation->strict;
 
-                    if (OA\UNDEFINED === $parameter->description) {
+                    if (Generator::UNDEFINED === $parameter->description) {
                         $parameter->description = $annotation->description;
                     }
 
@@ -104,6 +108,19 @@ final class FosRestDescriber implements RouteDescriberInterface
     private function getFormat($requirements)
     {
         if ($requirements instanceof Constraint && !$requirements instanceof Regex) {
+            if ($requirements instanceof DateTime) {
+                // As defined per RFC3339
+                if (\DateTime::RFC3339 === $requirements->format || 'c' === $requirements->format) {
+                    return 'date-time';
+                }
+
+                if ('Y-m-d' === $requirements->format) {
+                    return 'date';
+                }
+
+                return null;
+            }
+
             $reflectionClass = new \ReflectionClass($requirements);
 
             return $reflectionClass->getShortName();
@@ -114,7 +131,7 @@ final class FosRestDescriber implements RouteDescriberInterface
 
     private function getContentSchemaForType(OA\RequestBody $requestBody, string $type): OA\Schema
     {
-        $requestBody->content = OA\UNDEFINED !== $requestBody->content ? $requestBody->content : [];
+        $requestBody->content = Generator::UNDEFINED !== $requestBody->content ? $requestBody->content : [];
         switch ($type) {
             case 'json':
                 $contentType = 'application/json';
@@ -151,7 +168,7 @@ final class FosRestDescriber implements RouteDescriberInterface
     {
         $schema->default = $annotation->getDefault();
 
-        if (OA\UNDEFINED === $schema->type) {
+        if (Generator::UNDEFINED === $schema->type) {
             $schema->type = $annotation->map ? 'array' : 'string';
         }
 
@@ -169,5 +186,22 @@ final class FosRestDescriber implements RouteDescriberInterface
         if (null !== $format) {
             $schema->format = $format;
         }
+    }
+
+    /**
+     * @return OA\AbstractAnnotation[]
+     */
+    private function getAttributesAsAnnotation(\ReflectionMethod $reflection, string $className): array
+    {
+        $annotations = [];
+        if (\PHP_VERSION_ID < 80100) {
+            return $annotations;
+        }
+
+        foreach ($reflection->getAttributes($className, \ReflectionAttribute::IS_INSTANCEOF) as $attribute) {
+            $annotations[] = $attribute->newInstance();
+        }
+
+        return $annotations;
     }
 }

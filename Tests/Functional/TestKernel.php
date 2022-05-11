@@ -18,8 +18,10 @@ use Hateoas\Configuration\Embedded;
 use JMS\SerializerBundle\JMSSerializerBundle;
 use Nelmio\ApiDocBundle\NelmioApiDocBundle;
 use Nelmio\ApiDocBundle\Tests\Functional\Entity\BazingaUser;
+use Nelmio\ApiDocBundle\Tests\Functional\Entity\JMSComplex;
 use Nelmio\ApiDocBundle\Tests\Functional\Entity\NestedGroup\JMSPicture;
 use Nelmio\ApiDocBundle\Tests\Functional\Entity\PrivateProtectedExposure;
+use Nelmio\ApiDocBundle\Tests\Functional\Entity\SymfonyConstraintsWithValidationGroups;
 use Nelmio\ApiDocBundle\Tests\Functional\ModelDescriber\VirtualTypeClassDoesNotExistsHandlerDefinedDescriber;
 use Sensio\Bundle\FrameworkExtraBundle\SensioFrameworkExtraBundle;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
@@ -29,7 +31,7 @@ use Symfony\Component\Config\Loader\LoaderInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\HttpKernel\Kernel;
-use Symfony\Component\Routing\RouteCollectionBuilder;
+use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 use Symfony\Component\Serializer\Annotation\SerializedName;
 
 class TestKernel extends Kernel
@@ -37,6 +39,7 @@ class TestKernel extends Kernel
     const USE_JMS = 1;
     const USE_BAZINGA = 2;
     const ERROR_ARRAY_ITEMS = 4;
+    const USE_VALIDATION_GROUPS = 8;
 
     use MicroKernelTrait;
 
@@ -52,7 +55,7 @@ class TestKernel extends Kernel
     /**
      * {@inheritdoc}
      */
-    public function registerBundles()
+    public function registerBundles(): iterable
     {
         $bundles = [
             new FrameworkBundle(),
@@ -78,38 +81,42 @@ class TestKernel extends Kernel
     /**
      * {@inheritdoc}
      */
-    protected function configureRoutes(RouteCollectionBuilder $routes)
+    protected function configureRoutes($routes)
     {
-        $routes->import(__DIR__.'/Controller/TestController.php', '/', 'annotation');
-        $routes->import(__DIR__.'/Controller/ApiController.php', '/', 'annotation');
-        $routes->import(__DIR__.'/Controller/ClassApiController.php', '/', 'annotation');
-        $routes->import(__DIR__.'/Controller/UndocumentedController.php', '/', 'annotation');
-        $routes->import(__DIR__.'/Controller/InvokableController.php', '/', 'annotation');
-        $routes->import('', '/api', 'api_platform');
-        $routes->add('/docs/{area}', 'nelmio_api_doc.controller.swagger_ui')->setDefault('area', 'default');
-        $routes->add('/docs.json', 'nelmio_api_doc.controller.swagger');
-        $routes->import(__DIR__.'/Controller/FOSRestController.php', '/', 'annotation');
+        $this->import($routes, __DIR__.'/Resources/routes.yaml', '/', 'yaml');
 
         if (class_exists(SerializedName::class)) {
-            $routes->import(__DIR__.'/Controller/SerializedNameController.php', '/', 'annotation');
+            $this->import($routes, __DIR__.'/Controller/SerializedNameController.php', '/', 'annotation');
         }
 
         if ($this->flags & self::USE_JMS) {
-            $routes->import(__DIR__.'/Controller/JMSController.php', '/', 'annotation');
+            $this->import($routes, __DIR__.'/Controller/JMSController.php', '/', 'annotation');
         }
 
         if ($this->flags & self::USE_BAZINGA) {
-            $routes->import(__DIR__.'/Controller/BazingaController.php', '/', 'annotation');
+            $this->import($routes, __DIR__.'/Controller/BazingaController.php', '/', 'annotation');
 
             try {
                 new \ReflectionMethod(Embedded::class, 'getType');
-                $routes->import(__DIR__.'/Controller/BazingaTypedController.php', '/', 'annotation');
+                $this->import($routes, __DIR__.'/Controller/BazingaTypedController.php', '/', 'annotation');
             } catch (\ReflectionException $e) {
             }
         }
 
         if ($this->flags & self::ERROR_ARRAY_ITEMS) {
-            $routes->import(__DIR__.'/Controller/ArrayItemsErrorController.php', '/', 'annotation');
+            $this->import($routes, __DIR__.'/Controller/ArrayItemsErrorController.php', '/', 'annotation');
+        }
+    }
+
+    /**
+     * BC for sf < 5.1.
+     */
+    private function import($routes, $resource, $prefix, $type)
+    {
+        if ($routes instanceof RoutingConfigurator) {
+            $routes->withPath($prefix)->import($resource, $type);
+        } else {
+            $routes->import($resource, $prefix, $type);
         }
     }
 
@@ -125,12 +132,8 @@ class TestKernel extends Kernel
             'validation' => null,
             'form' => null,
             'serializer' => ['enable_annotations' => true],
+            'property_access' => true,
         ];
-
-        // templating is deprecated
-        if (Kernel::VERSION_ID <= 40300) {
-            $framework['templating'] = ['engines' => ['twig']];
-        }
 
         $c->loadFromExtension('framework', $framework);
 
@@ -175,6 +178,7 @@ class TestKernel extends Kernel
 
         // Filter routes
         $c->loadFromExtension('nelmio_api_doc', [
+            'use_validation_groups' => boolval($this->flags & self::USE_VALIDATION_GROUPS),
             'documentation' => [
                 'servers' => [ // from https://github.com/nelmio/NelmioApiDocBundle/issues/1691
                     [
@@ -184,6 +188,20 @@ class TestKernel extends Kernel
                 ],
                 'info' => [
                     'title' => 'My Default App',
+                ],
+                'paths' => [
+                    // Ensures we can define routes in Yaml without defining OperationIds
+                    // See https://github.com/zircote/swagger-php/issues/1153
+                    '/api/test-from-yaml' => ['get' => [
+                        'responses' => [
+                            200 => ['description' => 'success'],
+                        ],
+                    ]],
+                    '/api/test-from-yaml2' => ['get' => [
+                        'responses' => [
+                            200 => ['description' => 'success'],
+                        ],
+                    ]],
                 ],
                 'components' => [
                     'schemas' => [
@@ -200,6 +218,10 @@ class TestKernel extends Kernel
                                 ['$ref' => '#/components/schemas/Pet'],
                                 ['type' => 'object'],
                             ],
+                        ],
+                        'AddProp' => [
+                            'type' => 'object',
+                            'additionalProperties' => false,
                         ],
                     ],
                     'parameters' => [
@@ -247,6 +269,30 @@ class TestKernel extends Kernel
                         'type' => BazingaUser::class,
                         'groups' => ['foo'],
                     ],
+                    [
+                        'alias' => 'JMSComplex',
+                        'type' => JMSComplex::class,
+                        'groups' => [
+                            'list',
+                            'details',
+                            'User' => ['list'],
+                        ],
+                    ],
+                    [
+                        'alias' => 'JMSComplexDefault',
+                        'type' => JMSComplex::class,
+                        'groups' => null,
+                    ],
+                    [
+                        'alias' => 'SymfonyConstraintsTestGroup',
+                        'type' => SymfonyConstraintsWithValidationGroups::class,
+                        'groups' => ['test'],
+                    ],
+                    [
+                        'alias' => 'SymfonyConstraintsDefaultGroup',
+                        'type' => SymfonyConstraintsWithValidationGroups::class,
+                        'groups' => null,
+                    ],
                 ],
             ],
         ]);
@@ -259,7 +305,7 @@ class TestKernel extends Kernel
     /**
      * {@inheritdoc}
      */
-    public function getCacheDir()
+    public function getCacheDir(): string
     {
         return parent::getCacheDir().'/'.$this->flags;
     }
@@ -267,7 +313,7 @@ class TestKernel extends Kernel
     /**
      * {@inheritdoc}
      */
-    public function getLogDir()
+    public function getLogDir(): string
     {
         return parent::getLogDir().'/'.$this->flags;
     }
